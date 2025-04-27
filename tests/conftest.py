@@ -5,21 +5,21 @@ from http import HTTPStatus
 from inspect import getsource
 from pathlib import Path
 from typing import (
-    Iterable,
-    Type,
-    Optional,
-    Union,
     Any,
-    Tuple,
+    Iterable,
     List,
     NamedTuple,
+    Optional,
+    Tuple,
+    Type,
     TypeVar,
+    Union,
 )
 
 import pytest
 from django.apps import apps
 from django.contrib.auth import get_user_model
-from django.db.models import Model, Field
+from django.db.models import Field, Model
 from django.forms import BaseForm
 from django.http import HttpResponse
 from django.test import override_settings
