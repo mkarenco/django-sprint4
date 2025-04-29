@@ -10,6 +10,12 @@ from django.db import models
 User = get_user_model()
 
 
+class PostForeignKey(models.ForeignKey):
+    def __init__(self, to, **kwargs):
+        kwargs.setdefault('related_name', 'posts')
+        super().__init__(to, **kwargs)
+
+
 class PublishedModel(models.Model):
     """Абстрактная модель для объектов с публикацией и датой создания."""
 
@@ -46,6 +52,7 @@ class Category(PublishedModel):
     class Meta:
         verbose_name = 'категория'
         verbose_name_plural = 'Категории'
+        ordering = ('slug',)
 
     def __str__(self):
         return f'{self.title[:50]} (категория: {self.slug})'
@@ -62,6 +69,7 @@ class Location(PublishedModel):
     class Meta:
         verbose_name = 'местоположение'
         verbose_name_plural = 'Местоположения'
+        ordering = ('name',)
 
     def __str__(self):
         return self.name[:50]
@@ -86,26 +94,23 @@ class Post(PublishedModel):
         null=True,
         blank=True
     )
-    author = models.ForeignKey(
+    author = PostForeignKey(
         User,
         on_delete=models.CASCADE,
-        verbose_name='Автор публикации',
-        related_name='posts'
+        verbose_name='Автор публикации'
     )
-    location = models.ForeignKey(
+    location = PostForeignKey(
         Location,
         on_delete=models.SET_NULL,
         blank=True,
         null=True,
-        verbose_name='Местоположение',
-        related_name='posts'
+        verbose_name='Местоположение'
     )
-    category = models.ForeignKey(
+    category = PostForeignKey(
         Category,
         on_delete=models.SET_NULL,
         null=True,
-        verbose_name='Категория',
-        related_name='posts'
+        verbose_name='Категория'
     )
 
     class Meta:
@@ -114,17 +119,16 @@ class Post(PublishedModel):
         ordering = ('-pub_date',)
 
     def __str__(self):
-        status = 'опубл.' if self.is_published else 'черновик'
         return (
             f'{self.title[:50]} - '
-            f'{self.pub_date:%Y-%m-%d} ({status})'
+            f'{self.pub_date:%Y-%m-%d} ({self.is_published})'
         )
 
 
 class Comment(models.Model):
     """Модель комментария к посту."""
 
-    text = models.TextField('Текст комментария')
+    text = models.TextField('Текст')
     created_at = models.DateTimeField(auto_now_add=True)
     post = models.ForeignKey(
         Post,
@@ -134,6 +138,7 @@ class Comment(models.Model):
     author = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
+        related_name='user_comments'
     )
 
     class Meta:
@@ -143,4 +148,4 @@ class Comment(models.Model):
 
     def __str__(self):
         return (f'Комментарий от {self.author.username} '
-                f'к "{self.post.title[:30]}"')
+                f'к посту с названием "{self.post.title[:30]}"')

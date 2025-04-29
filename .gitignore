@@ -149,4 +149,5 @@ dmypy.json
 media/
 
 sent_emails/
+blogicum/static/css/
 

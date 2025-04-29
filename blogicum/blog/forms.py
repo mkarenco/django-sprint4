@@ -5,11 +5,9 @@
 """
 
 from django import forms
-from django.contrib.auth import get_user_model
+from django.contrib.auth.models import User
 
 from .models import Comment, Post
-
-User = get_user_model()
 
 
 class PostForm(forms.ModelForm):
@@ -20,7 +18,8 @@ class PostForm(forms.ModelForm):
         widgets = {
             'pub_date': forms.DateInput(attrs={'type': 'date'})
         }
-        fields = ('title', 'text', 'pub_date', 'image', 'location', 'category')
+        exclude = ('author',)
+        fields = '__all__'
 
 
 class CommentForm(forms.ModelForm):
@@ -45,4 +44,4 @@ class UserUpdateForm(forms.ModelForm):
 
     class Meta:
         model = User
-        fields = ['username', 'first_name', 'last_name', 'email']
+        fields = ('username', 'first_name', 'last_name', 'email')

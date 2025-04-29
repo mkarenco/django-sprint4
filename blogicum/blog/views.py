@@ -2,18 +2,17 @@
 Веб-представления для блог-приложения.
 
 Этот модуль содержит классы представлений Django, реализующие функциональность
-для работы с постами, категориями, комментариями, профилями пользователей и
-выходом из системы. Используются миксины для фильтрации опубликованных постов
+для работы с постами, категориями, комментариями, профилями пользователей.
+Используются функция для фильтрации опубликованных постов
 и ограничения доступа, а также generic views для упрощения обработки запросов.
 """
 
-from django.contrib.auth import get_user_model, logout
-from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.models import User
 from django.db.models import Count
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import get_object_or_404
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
-from django.views import View
 from django.views.generic import (
     CreateView,
     DeleteView,
@@ -23,47 +22,40 @@ from django.views.generic import (
 )
 
 from .forms import CommentForm, PostForm, UserUpdateForm
+from .mixins import CommentMixin, OnlyAuthorMixin
 from .models import Category, Comment, Post
 
-User = get_user_model()
+PAGINATE_BY = 10
 
 
-class PublishedPostsMixin:
+def post_set_processing(
+        posts,
+        apply_filtering=True,
+        select_related_fields=None,
+        annotate_comment_count=False
+):
+    """Обрабатывает список постов.
+
+    Применяет фильтрацию по дате и статусу публикации, подключает связанные
+    таблицы (author, category и т.п.), а также добавляет количество
+    комментариев, если это нужно.
+
+    Используется для подготовки списка постов перед выводом.
     """
-    Миксин для фильтрации только опубликованных постов.
-
-    Фильтрует посты по условиям: опубликован, дата публикации не позже текущего
-    момента, категория опубликована. Использует select_related для оптимизации
-    запросов к связанным таблицам (author, category).
-    """
-
-    def get_queryset(self):
-        return super().get_queryset().select_related(
-            'author',
-            'category').filter(
+    if apply_filtering:
+        posts = posts.filter(
             pub_date__lte=timezone.now(),
             is_published=True,
             category__is_published=True
         )
+    if select_related_fields:
+        posts = posts.select_related(*select_related_fields)
+    if annotate_comment_count:
+        posts = posts.annotate(comment_count=Count('comments'))
+    return posts
 
 
-class OnlyAuthorMixin(UserPassesTestMixin):
-    """
-    Миксин для ограничения доступа к объекту только его автору.
-
-    Проверяет, является ли текущий пользователь автором объекта. Используется
-    для защиты операций редактирования и удаления постов и комментариев.
-    """
-
-    def test_func(self):
-        object = self.get_object()
-        return object.author == self.request.user
-
-    def handle_no_permission(self):
-        return redirect('blog:post_detail', post_id=self.kwargs['post_id'])
-
-
-class HomePageListView(PublishedPostsMixin, ListView):
+class HomePageListView(ListView):
     """
     Главная страница с отсортированным списком опубликованных постов.
 
@@ -76,9 +68,10 @@ class HomePageListView(PublishedPostsMixin, ListView):
     template_name = 'blog/index.html'
 
     def get_queryset(self):
-        return (super().get_queryset()
-                .annotate(comment_count=Count('comments'))
-                .order_by('-pub_date'))
+        return post_set_processing(
+            super().get_queryset(),
+            annotate_comment_count=True
+        ).order_by(*self.model._meta.ordering)
 
 
 class PostDetailView(DetailView):
@@ -95,26 +88,26 @@ class PostDetailView(DetailView):
     pk_url_kwarg = 'post_id'
 
     def get_object(self, queryset=None):
-        """Получает пост и проверяет доступ для неопубликованных постов."""
-        post = get_object_or_404(
-            Post.objects.select_related('author', 'category', 'location'),
-            pk=self.kwargs['post_id']
+        full_qs = Post.objects.select_related(
+            'author', 'category', 'location'
         )
+        post = super().get_object(queryset=full_qs)
         if post.author != self.request.user:
-            return get_object_or_404(
-                Post.objects.select_related('author', 'category', 'location'),
-                pk=self.kwargs['post_id'],
+            pub_qs = full_qs.filter(
                 is_published=True,
                 category__is_published=True,
-                pub_date__lte=timezone.now())
+                pub_date__lte=timezone.now()
+            )
+            post = super().get_object(queryset=pub_qs)
         return post
 
     def get_context_data(self, **kwargs):
         """Добавляет форму комментариев и список комментариев в контекст."""
-        context = super().get_context_data(**kwargs)
-        context['form'] = CommentForm()
-        context['comments'] = self.object.comments.order_by('created_at')
-        return context
+        return super().get_context_data(
+            **kwargs,
+            form=CommentForm(),
+            comments=self.object.comments.order_by('created_at')
+        )
 
 
 class PostCreateView(LoginRequiredMixin, CreateView):
@@ -135,7 +128,7 @@ class PostCreateView(LoginRequiredMixin, CreateView):
 
     def get_success_url(self):
         return reverse(
-            'blog:profile', kwargs={'username': self.request.user.username}
+            'blog:profile', args=[self.request.user.username]
         )
 
 
@@ -154,12 +147,16 @@ class PostUpdateView(LoginRequiredMixin, OnlyAuthorMixin, UpdateView):
     pk_url_kwarg = 'post_id'
 
     def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context['form'] = PostForm(instance=self.object)
-        return context
+        return super().get_context_data(
+            **kwargs,
+            form=PostForm(instance=self.object)
+        )
 
     def get_success_url(self):
-        return reverse('blog:post_detail', kwargs={'post_id': self.object.pk})
+        return reverse(
+            'blog:post_detail',
+            args=[self.kwargs.get(self.pk_url_kwarg)]
+        )
 
 
 class PostDeleteView(LoginRequiredMixin, OnlyAuthorMixin, DeleteView):
@@ -176,7 +173,7 @@ class PostDeleteView(LoginRequiredMixin, OnlyAuthorMixin, DeleteView):
     pk_url_kwarg = 'post_id'
 
 
-class CategoryPostsView(PublishedPostsMixin, ListView):
+class CategoryPostsView(ListView):
     """
     Страница со списком постов по выбранной категории.
 
@@ -187,21 +184,29 @@ class CategoryPostsView(PublishedPostsMixin, ListView):
     model = Post
     template_name = 'blog/category.html'
     context_object_name = 'post_list'
-    paginate_by = 10
+    paginate_by = PAGINATE_BY
 
-    def get_queryset(self):
-        self.category = get_object_or_404(
+    def get_category(self):
+        """Возвращает опубликованную категорию по slug из URL."""
+        return get_object_or_404(
             Category,
             slug=self.kwargs['category_slug'],
             is_published=True
         )
-        queryset = super().get_queryset().filter(category=self.category)
-        return queryset
+
+    def get_queryset(self):
+        return post_set_processing(
+            self.get_category().posts.all(),
+            apply_filtering=True,
+            select_related_fields=['author', 'category'],
+            annotate_comment_count=False
+        )
 
     def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context['category'] = self.category
-        return context
+        return super().get_context_data(
+            **kwargs,
+            category=self.get_category()
+        )
 
 
 class CommentCreateView(LoginRequiredMixin, CreateView):
@@ -216,21 +221,24 @@ class CommentCreateView(LoginRequiredMixin, CreateView):
     form_class = CommentForm
 
     def dispatch(self, request, *args, **kwargs):
-        self.current_post = get_object_or_404(Post, pk=kwargs.get('post_id'))
         return super().dispatch(request, *args, **kwargs)
 
     def form_valid(self, form):
         form.instance.author = self.request.user
-        form.instance.post = self.current_post
+        form.instance.post = get_object_or_404(
+            Post,
+            pk=self.kwargs.get('post_id')
+        )
         return super().form_valid(form)
 
     def get_success_url(self):
         return reverse(
-            'blog:post_detail', kwargs={'post_id': self.current_post.pk}
+            'blog:post_detail',
+            args=[self.kwargs.get('post_id')]
         )
 
 
-class CommentUpdateView(LoginRequiredMixin, OnlyAuthorMixin, UpdateView):
+class CommentUpdateView(CommentMixin, UpdateView):
     """
     Страница редактирования комментария.
 
@@ -238,18 +246,10 @@ class CommentUpdateView(LoginRequiredMixin, OnlyAuthorMixin, UpdateView):
     перенаправляется на страницу поста, к которому относится комментарий.
     """
 
-    model = Comment
     form_class = CommentForm
-    pk_url_kwarg = 'comment_id'
-    template_name = 'blog/comment.html'
-
-    def get_success_url(self):
-        return reverse(
-            'blog:post_detail', kwargs={'post_id': self.object.post.pk}
-        )
 
 
-class CommentDeleteView(LoginRequiredMixin, OnlyAuthorMixin, DeleteView):
+class CommentDeleteView(CommentMixin, DeleteView):
     """
     Страница удаления комментария.
 
@@ -257,14 +257,7 @@ class CommentDeleteView(LoginRequiredMixin, OnlyAuthorMixin, DeleteView):
     перенаправляется на страницу поста, к которому относится комментарий.
     """
 
-    model = Comment
-    pk_url_kwarg = 'comment_id'
-    template_name = 'blog/comment.html'
-
-    def get_success_url(self):
-        return reverse(
-            'blog:post_detail', kwargs={'post_id': self.object.post.pk}
-        )
+    pass
 
 
 class ProfileDetailView(ListView):
@@ -273,24 +266,31 @@ class ProfileDetailView(ListView):
 
     Отображает список постов пользователя с пагинацией (10 постов на страницу),
     аннотируя количество комментариев и сортируя по убыванию даты публикации.
+
+    Для автора отображаются все его посты,
+    для остальных — только опубликованные.
     """
 
     template_name = 'blog/profile.html'
-    paginate_by = 10
+    paginate_by = PAGINATE_BY
+
+    def dispatch(self, request, *args, **kwargs):
+        self.profile = get_object_or_404(User, username=kwargs['username'])
+        return super().dispatch(request, *args, **kwargs)
 
     def get_queryset(self):
-        user = get_object_or_404(User, username=self.kwargs['username'])
-        return Post.objects.filter(author=user).annotate(
-            comment_count=Count('comments')
+        return post_set_processing(
+            self.profile.posts.all(),
+            apply_filtering=self.request.user != self.profile,
+            select_related_fields=['author', 'category'],
+            annotate_comment_count=True
         ).order_by('-pub_date')
 
     def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context['profile'] = get_object_or_404(
-            User,
-            username=self.kwargs['username']
+        return super().get_context_data(
+            **kwargs,
+            profile=self.profile
         )
-        return context
 
 
 class ProfileUpdateView(LoginRequiredMixin, UpdateView):
@@ -311,21 +311,5 @@ class ProfileUpdateView(LoginRequiredMixin, UpdateView):
 
     def get_success_url(self):
         return reverse(
-            'blog:profile', kwargs={'username': self.request.user.username}
+            'blog:profile', args=[self.request.user.username]
         )
-
-
-class CustomLogoutView(View):
-    """
-    Кастомное представление для выхода пользователя из учетной записи.
-
-    Обрабатывает GET-запрос для завершения сессии и отображает страницу
-    подтверждения выхода.
-    """
-
-    template_name = 'registration/logged_out.html'
-
-    def get(self, request, *args, **kwargs):
-        """Обрабатывает GET-запрос для выхода из системы."""
-        logout(request)
-        return render(request, self.template_name)

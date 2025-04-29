@@ -4,7 +4,6 @@
 статических страниц,блога, аутентификации, регистрации и обработки медиафайлов.
 """
 
-from blog.views import CustomLogoutView
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
@@ -23,8 +22,6 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     # Статические страницы
     path('pages/', include('pages.urls', namespace='pages')),
-    # Выход из системы
-    path('auth/logout/', CustomLogoutView.as_view(), name='logout'),
     # Встроенные маршруты аутентификации Django
     path('auth/', include('django.contrib.auth.urls')),
     # Регистрация нового пользователя
