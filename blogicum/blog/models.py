@@ -10,12 +10,6 @@ from django.db import models
 User = get_user_model()
 
 
-class PostForeignKey(models.ForeignKey):
-    def __init__(self, to, **kwargs):
-        kwargs.setdefault('related_name', 'posts')
-        super().__init__(to, **kwargs)
-
-
 class PublishedModel(models.Model):
     """Абстрактная модель для объектов с публикацией и датой создания."""
 
@@ -94,19 +88,19 @@ class Post(PublishedModel):
         null=True,
         blank=True
     )
-    author = PostForeignKey(
+    author = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         verbose_name='Автор публикации'
     )
-    location = PostForeignKey(
+    location = models.ForeignKey(
         Location,
         on_delete=models.SET_NULL,
         blank=True,
         null=True,
         verbose_name='Местоположение'
     )
-    category = PostForeignKey(
+    category = models.ForeignKey(
         Category,
         on_delete=models.SET_NULL,
         null=True,
@@ -114,6 +108,7 @@ class Post(PublishedModel):
     )
 
     class Meta:
+        default_related_name = 'posts'
         verbose_name = 'публикация'
         verbose_name_plural = 'Публикации'
         ordering = ('-pub_date',)
@@ -129,19 +124,21 @@ class Comment(models.Model):
     """Модель комментария к посту."""
 
     text = models.TextField('Текст')
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(
+        'Дата создания',
+        auto_now_add=True
+    )
     post = models.ForeignKey(
         Post,
         on_delete=models.CASCADE,
-        related_name='comments',
     )
     author = models.ForeignKey(
         User,
-        on_delete=models.CASCADE,
-        related_name='user_comments'
+        on_delete=models.CASCADE
     )
 
     class Meta:
+        default_related_name = 'comments'
         verbose_name = 'комментарий'
         verbose_name_plural = 'Комментарии'
         ordering = ('created_at',)

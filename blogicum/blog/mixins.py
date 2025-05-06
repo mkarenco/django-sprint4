@@ -9,7 +9,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.shortcuts import redirect
 from django.urls import reverse
 
-from .models import Comment
+from .models import Comment, Post
 
 
 class OnlyAuthorMixin(UserPassesTestMixin):
@@ -21,11 +21,7 @@ class OnlyAuthorMixin(UserPassesTestMixin):
     """
 
     def test_func(self):
-        """
-        Проверяет, является ли текущий пользователь автором объекта.
-
-        Возвращает True, если пользователь является автором, иначе False.
-        """
+        """Проверяет, является ли текущий пользователь автором объекта."""
         return self.get_object().author == self.request.user
 
     def handle_no_permission(self):
@@ -57,4 +53,15 @@ class CommentMixin(LoginRequiredMixin, OnlyAuthorMixin):
         Перенаправляет пользователя на страницу поста,
         к которому относится комментарий.
         """
-        return reverse('blog:post_detail', args=[self.object.post.pk])
+        return reverse('blog:post_detail', args=[self.object.post_id])
+
+
+class PostMixin(LoginRequiredMixin, OnlyAuthorMixin):
+    """
+    Базовый класс для представлений, связанных с постами.
+    Обеспечивает общие настройки для редактирования и удаления постов,
+    """
+
+    model = Post
+    template_name = 'blog/create.html'
+    pk_url_kwarg = 'post_id'

@@ -22,17 +22,18 @@ from django.views.generic import (
 )
 
 from .forms import CommentForm, PostForm, UserUpdateForm
-from .mixins import CommentMixin, OnlyAuthorMixin
+from .mixins import CommentMixin, PostMixin
 from .models import Category, Comment, Post
 
 PAGINATE_BY = 10
 
 
 def post_set_processing(
-        posts,
+        posts=None,
         apply_filtering=True,
-        select_related_fields=None,
-        annotate_comment_count=False
+        select_related_fields=True,
+        annotate_comment_count=True,
+        ordering=None
 ):
     """Обрабатывает список постов.
 
@@ -42,6 +43,8 @@ def post_set_processing(
 
     Используется для подготовки списка постов перед выводом.
     """
+    if posts is None:
+        posts = Post.objects.all()
     if apply_filtering:
         posts = posts.filter(
             pub_date__lte=timezone.now(),
@@ -49,9 +52,11 @@ def post_set_processing(
             category__is_published=True
         )
     if select_related_fields:
-        posts = posts.select_related(*select_related_fields)
+        posts = posts.select_related('author', 'category', 'location')
     if annotate_comment_count:
         posts = posts.annotate(comment_count=Count('comments'))
+    if ordering:
+        posts = posts.order_by(*ordering)
     return posts
 
 
@@ -66,12 +71,7 @@ class HomePageListView(ListView):
     model = Post
     paginate_by = 10
     template_name = 'blog/index.html'
-
-    def get_queryset(self):
-        return post_set_processing(
-            super().get_queryset(),
-            annotate_comment_count=True
-        ).order_by(*self.model._meta.ordering)
+    queryset = post_set_processing(ordering=Post._meta.ordering)
 
 
 class PostDetailView(DetailView):
@@ -88,25 +88,18 @@ class PostDetailView(DetailView):
     pk_url_kwarg = 'post_id'
 
     def get_object(self, queryset=None):
-        full_qs = Post.objects.select_related(
-            'author', 'category', 'location'
-        )
-        post = super().get_object(queryset=full_qs)
-        if post.author != self.request.user:
-            pub_qs = full_qs.filter(
-                is_published=True,
-                category__is_published=True,
-                pub_date__lte=timezone.now()
-            )
-            post = super().get_object(queryset=pub_qs)
-        return post
+        if self.request.user.is_authenticated:
+            post = super().get_object(queryset=Post.objects.all())
+            if post.author == self.request.user:
+                return post
+        return super().get_object(queryset=post_set_processing())
 
     def get_context_data(self, **kwargs):
         """Добавляет форму комментариев и список комментариев в контекст."""
         return super().get_context_data(
             **kwargs,
             form=CommentForm(),
-            comments=self.object.comments.order_by('created_at')
+            comments=self.object.comments.all()
         )
 
 
@@ -132,7 +125,7 @@ class PostCreateView(LoginRequiredMixin, CreateView):
         )
 
 
-class PostUpdateView(LoginRequiredMixin, OnlyAuthorMixin, UpdateView):
+class PostUpdateView(PostMixin, UpdateView):
     """
     Страница редактирования поста.
 
@@ -141,10 +134,7 @@ class PostUpdateView(LoginRequiredMixin, OnlyAuthorMixin, UpdateView):
     возвращается на страницу поста.
     """
 
-    model = Post
     form_class = PostForm
-    template_name = 'blog/create.html'
-    pk_url_kwarg = 'post_id'
 
     def get_context_data(self, **kwargs):
         return super().get_context_data(
@@ -155,11 +145,11 @@ class PostUpdateView(LoginRequiredMixin, OnlyAuthorMixin, UpdateView):
     def get_success_url(self):
         return reverse(
             'blog:post_detail',
-            args=[self.kwargs.get(self.pk_url_kwarg)]
+            args=[self.kwargs[self.pk_url_kwarg]]
         )
 
 
-class PostDeleteView(LoginRequiredMixin, OnlyAuthorMixin, DeleteView):
+class PostDeleteView(PostMixin, DeleteView):
     """
     Страница удаления поста.
 
@@ -167,10 +157,7 @@ class PostDeleteView(LoginRequiredMixin, OnlyAuthorMixin, DeleteView):
     на главную страницу.
     """
 
-    model = Post
-    template_name = 'blog/create.html'
     success_url = reverse_lazy('blog:index')
-    pk_url_kwarg = 'post_id'
 
 
 class CategoryPostsView(ListView):
@@ -197,8 +184,6 @@ class CategoryPostsView(ListView):
     def get_queryset(self):
         return post_set_processing(
             self.get_category().posts.all(),
-            apply_filtering=True,
-            select_related_fields=['author', 'category'],
             annotate_comment_count=False
         )
 
@@ -220,9 +205,6 @@ class CommentCreateView(LoginRequiredMixin, CreateView):
     model = Comment
     form_class = CommentForm
 
-    def dispatch(self, request, *args, **kwargs):
-        return super().dispatch(request, *args, **kwargs)
-
     def form_valid(self, form):
         form.instance.author = self.request.user
         form.instance.post = get_object_or_404(
@@ -234,7 +216,7 @@ class CommentCreateView(LoginRequiredMixin, CreateView):
     def get_success_url(self):
         return reverse(
             'blog:post_detail',
-            args=[self.kwargs.get('post_id')]
+            args=[self.kwargs['post_id']]
         )
 
 
@@ -274,22 +256,22 @@ class ProfileDetailView(ListView):
     template_name = 'blog/profile.html'
     paginate_by = PAGINATE_BY
 
-    def dispatch(self, request, *args, **kwargs):
-        self.profile = get_object_or_404(User, username=kwargs['username'])
-        return super().dispatch(request, *args, **kwargs)
+    def get_object(self, queryset=None):
+        return get_object_or_404(User, username=self.kwargs['username'])
 
     def get_queryset(self):
+        profile = self.get_object()
         return post_set_processing(
-            self.profile.posts.all(),
-            apply_filtering=self.request.user != self.profile,
-            select_related_fields=['author', 'category'],
-            annotate_comment_count=True
-        ).order_by('-pub_date')
+            profile.posts.all(),
+            apply_filtering=self.request.user != profile,
+            annotate_comment_count=True,
+            ordering=['-pub_date']
+        )
 
     def get_context_data(self, **kwargs):
         return super().get_context_data(
             **kwargs,
-            profile=self.profile
+            profile=self.get_object()
         )
 
 

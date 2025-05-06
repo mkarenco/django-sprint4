@@ -19,7 +19,6 @@ class PostForm(forms.ModelForm):
             'pub_date': forms.DateInput(attrs={'type': 'date'})
         }
         exclude = ('author',)
-        fields = '__all__'
 
 
 class CommentForm(forms.ModelForm):
