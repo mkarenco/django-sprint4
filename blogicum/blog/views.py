@@ -9,7 +9,7 @@
 
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.models import User
-from django.db.models import Count, Q
+from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
@@ -56,7 +56,7 @@ def post_set_processing(
         )
     if annotate_comment_count:
         posts = posts.annotate(
-            comment_count=Count('comments')).order_by('-pub_date')
+            comment_count=Count('comments')).order_by(*Post._meta.ordering)
     return posts
 
 
@@ -69,7 +69,7 @@ class HomePageListView(ListView):
     """
 
     model = Post
-    paginate_by = 10
+    paginate_by = PAGINATE_BY
     template_name = 'blog/index.html'
     queryset = post_set_processing()
 
@@ -87,12 +87,14 @@ class PostDetailView(DetailView):
     template_name = 'blog/detail.html'
     pk_url_kwarg = 'post_id'
 
-    def get_queryset(self):
-        posts = super().get_queryset()
+    def get_object(self):
+        post = super().get_object()
         user = self.request.user
-        if user.is_authenticated:
-            return posts.filter(Q(is_published=True) | Q(author=user))
-        return posts.filter(is_published=True)
+        if user.is_authenticated and post.author == user:
+            return post
+        return super().get_object(
+            queryset=post_set_processing()
+        )
 
     def get_context_data(self, **kwargs):
         """Добавляет форму комментариев и список комментариев в контекст."""
@@ -259,10 +261,10 @@ class ProfileDetailView(ListView):
         return get_object_or_404(User, username=self.kwargs['username'])
 
     def get_queryset(self):
-        profile = self.get_object()
+        author = self.get_object()
         return post_set_processing(
-            profile.posts.all(),
-            apply_filtering=self.request.user != profile
+            author.posts.all(),
+            apply_filtering=self.request.user != author
         )
 
     def get_context_data(self, **kwargs):
