@@ -13,6 +13,7 @@ from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
+from django.db.models import Q
 from django.views.generic import (
     CreateView,
     DeleteView,
@@ -29,11 +30,10 @@ PAGINATE_BY = 10
 
 
 def post_set_processing(
-        posts=None,
+        posts=Post.objects.all(),
         apply_filtering=True,
         select_related_fields=True,
-        annotate_comment_count=True,
-        ordering=None
+        annotate_comment_count=True
 ):
     """Обрабатывает список постов.
 
@@ -43,8 +43,6 @@ def post_set_processing(
 
     Используется для подготовки списка постов перед выводом.
     """
-    if posts is None:
-        posts = Post.objects.all()
     if apply_filtering:
         posts = posts.filter(
             pub_date__lte=timezone.now(),
@@ -52,11 +50,14 @@ def post_set_processing(
             category__is_published=True
         )
     if select_related_fields:
-        posts = posts.select_related('author', 'category', 'location')
+        posts = posts.select_related(
+            'author',
+            'category',
+            'location'
+        )
     if annotate_comment_count:
-        posts = posts.annotate(comment_count=Count('comments'))
-    if ordering:
-        posts = posts.order_by(*ordering)
+        posts = posts.annotate(
+            comment_count=Count('comments')).order_by('-pub_date')
     return posts
 
 
@@ -71,7 +72,7 @@ class HomePageListView(ListView):
     model = Post
     paginate_by = 10
     template_name = 'blog/index.html'
-    queryset = post_set_processing(ordering=Post._meta.ordering)
+    queryset = post_set_processing()
 
 
 class PostDetailView(DetailView):
@@ -87,12 +88,12 @@ class PostDetailView(DetailView):
     template_name = 'blog/detail.html'
     pk_url_kwarg = 'post_id'
 
-    def get_object(self, queryset=None):
-        if self.request.user.is_authenticated:
-            post = super().get_object(queryset=Post.objects.all())
-            if post.author == self.request.user:
-                return post
-        return super().get_object(queryset=post_set_processing())
+    def get_queryset(self):
+        posts = super().get_queryset()
+        user = self.request.user
+        if user.is_authenticated:
+            return posts.filter(Q(is_published=True) | Q(author=user))
+        return posts.filter(is_published=True)
 
     def get_context_data(self, **kwargs):
         """Добавляет форму комментариев и список комментариев в контекст."""
@@ -183,8 +184,7 @@ class CategoryPostsView(ListView):
 
     def get_queryset(self):
         return post_set_processing(
-            self.get_category().posts.all(),
-            annotate_comment_count=False
+            self.get_category().posts.all()
         )
 
     def get_context_data(self, **kwargs):
@@ -209,7 +209,7 @@ class CommentCreateView(LoginRequiredMixin, CreateView):
         form.instance.author = self.request.user
         form.instance.post = get_object_or_404(
             Post,
-            pk=self.kwargs.get('post_id')
+            pk=self.kwargs['post_id']
         )
         return super().form_valid(form)
 
@@ -263,9 +263,7 @@ class ProfileDetailView(ListView):
         profile = self.get_object()
         return post_set_processing(
             profile.posts.all(),
-            apply_filtering=self.request.user != profile,
-            annotate_comment_count=True,
-            ordering=['-pub_date']
+            apply_filtering=self.request.user != profile
         )
 
     def get_context_data(self, **kwargs):
