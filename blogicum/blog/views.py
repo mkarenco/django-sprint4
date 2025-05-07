@@ -94,7 +94,6 @@ class PostDetailView(DetailView):
             return post
         return super().get_object(
             queryset=post_set_processing(
-                apply_filtering=True,
                 select_related_fields=False,
                 annotate_comment_count=False
             )
