@@ -30,7 +30,9 @@ PAGINATE_BY = 10
 
 def post_set_processing(
         posts=Post.objects.all(),
-        apply_filtering=True
+        apply_filtering=True,
+        select_related_fields=True,
+        annotate_comment_count=True
 ):
     """Обрабатывает список постов.
 
@@ -46,13 +48,15 @@ def post_set_processing(
             is_published=True,
             category__is_published=True
         )
-    posts = posts.select_related(
-        'author',
-        'category',
-        'location'
-    )
-    posts = posts.annotate(
-        comment_count=Count('comments')).order_by(*Post._meta.ordering)
+    if select_related_fields:
+        posts = posts.select_related(
+            'author',
+            'category',
+            'location'
+        )
+    if annotate_comment_count:
+        posts = posts.annotate(
+            comment_count=Count('comments')).order_by(*Post._meta.ordering)
     return posts
 
 
@@ -89,7 +93,11 @@ class PostDetailView(DetailView):
         if post.author == user:
             return post
         return super().get_object(
-            queryset=post_set_processing()
+            queryset=post_set_processing(
+                apply_filtering=True,
+                select_related_fields=False,
+                annotate_comment_count=False
+            )
         )
 
     def get_context_data(self, **kwargs):
